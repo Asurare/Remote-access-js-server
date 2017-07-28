@@ -1,0 +1,278 @@
+<!DOCTYPE HTML>
+<head>
+<meta charset="utf-8">
+<title>Uxer script</title>
+
+<script>
+
+var g_domain_list = "";
+var g_client_list = "";
+var ws;
+
+//parti websocket du client, avec une gestion de la perte de connection
+function start()
+{
+  ws = new WebSocket("ws://149.202.193.122:8080");
+  ws.onopen = function (event) {
+    ws.send('{ "type":"text", "content":"Browser ready."}' );
+  };
+  ws.onmessage=function(event) {
+    var message = JSON.parse(event.data);
+    console.log(message.type + " " + message.content);
+    switch(message.type) {
+      case "text":
+        dispMessage(message.content);
+        break;
+      case "domains":
+        g_domain_list = message.content;
+        update_domains(message.type);
+        break;
+      case "clients":
+        g_client_list = message.content;
+        update_clients(message.type);
+        break;
+    }
+  };
+  ws.onclose = function (event) {
+    //en cas de perte de connection, tentative de reconnextion toutes les 5 secondes (5000 mili-secondes)
+    alert("Problème de connection avec le serveur.");
+    ws = null;
+    setTimeout(function(){start()}, 5000);
+  }
+}
+
+window.onload = start();
+
+//logs serveurs
+function dispMessage(str) {
+  console.log("RECEIVED: " + str);
+  document.getElementById("message").innerHTML = str + "<br>";
+  console.log(document.getElementById("message").value);
+}
+
+//Update de la liste de clients
+function update_clients()
+{
+  var array = g_client_list.split("\n");
+  var list = document.getElementById("liste_clients");
+  if (list)
+    while (list.hasChildNodes()) {
+      list.removeChild(list.lastChild);
+    }
+  for (var i = 0; i < array.length - 1; i++) {
+    var option = document.createElement("option");
+    option.value = array[i];
+    option.text = array[i];
+    if (list)
+      list.appendChild(option);
+  }
+}
+
+function update_domains()
+{
+  var array = g_domain_list.split("\n");
+  array.sort();
+  var list = document.getElementById("domain_list");
+  var snd = document.getElementById("wp_domain_list");
+  list.innerHTML = "";
+  snd.innerHTML = "";
+  var selectList = document.createElement("select");
+  selectList.id = "liste_domains";
+  list.appendChild(selectList);
+  for (var i = 1; i < array.length; i++) {
+    var option = document.createElement("option");
+    option.value = array[i];
+    option.text = array[i];
+    selectList.appendChild(option);
+  }
+  var selectListbis = document.createElement("select");
+  selectListbis.id = "wp_liste_domains";
+  document.getElementById("wp_domain_list").appendChild(selectListbis);
+  document.getElementById("wp_liste_domains").innerHTML = document.getElementById("liste_domains").innerHTML;
+}
+
+//Vérification de l'élément reçu grace aux regex
+function verifElem(elem, type)
+{
+  var reg = (type == "domain" ? /^[a-zA-Z0-9][a-zA-Z0-9-]{1,61}[a-zA-Z0-9](?:\.[a-zA-Z]{2,})+$/ :
+              (type == "email" ? /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,3}$/ :
+                (type == "client" ? /^[a-z]{1,16}$/ :
+                  (type == "clientTitle" ? /^.{4,25}$/ :
+                    (type == "remote-url" ? /^((git|ssh|http(s)?)|(git@[\w\.]+))(:(\/\/)?)([\w\.@\:\/\-~]+)(\.git)(\/)?$/ :
+                      (type == "pass" || type == null ? /^(?=.*?[A-Z])(?=.*?[a-z])(?=.*?[0-9])(?=.*?[^a-zA-Z0-9\d\s:]).{8,}$/ : /^[a-zA-Z]{1,16}$/))))));
+  var res = elem.value.search(reg);
+  elem.style.backgroundColor = (res == 0 ? "#A9F5A9" : "#F78181");
+  return (res == 0 ? true : false);
+}
+
+//Création du réel url de remote pour bitbucket
+function createTrueUrl(elem)
+{
+   return (elem.substring(0, elem.lastIndexOf("@")) + ":" + document.getElementById("AppPassword").value + elem.substring(elem.lastIndexOf("@")));
+}
+
+//Création d'un élément JSON puis envoie de la commande parsé vers le serveur pour execuction
+function createElem(elem)
+{
+  var domain;
+  var name;
+  var pass;
+
+  //vérification de la stabilité de la connection
+  if (ws.readyState != ws.OPEN)
+    {
+      alert("Pas de connexion au serveur.");
+      return false;
+    }
+  var check = 0;
+  var to_send = {
+    type: "creation",
+    service : "",
+    content: ""
+
+  };
+  switch (elem.name)
+  {
+    //switch entre les différrente appelables possibles, vérification de leurs contenu puis création de l'élément.
+    case 'git':
+      console.log("git");
+      domain = document.getElementById("liste_domains");
+      check += (verifElem(domain, "domain") == false ? 1 : 0);
+      name = document.getElementById("GitRepoName");
+      check += (verifElem(name, "name") == false ? 1 : 0);
+      var remote = document.getElementById("GitRemoteUrl");
+      check += (verifElem(remote, "remote-url") == false ? 1 : 0);
+      to_send.service = "git";
+      to_send.content = "--create -domain " + domain.value + " -name " +
+                        name.value + " -remote-url " + createTrueUrl(remote.value);
+      break;
+    case 'domain':
+      console.log("domain");
+      domain = document.getElementById("Creationdomain");
+      check += (verifElem(domain, "domain") == false ? 1 : 0);
+      pass = document.getElementById("passwordD");
+      check += (verifElem(pass, "pass") == false ? 1 : 0);
+      name = document.getElementById("FirstNameD");
+      check += (verifElem(name, "client") == false ? 1 : 0);
+      client = document.getElementById("clts");
+      to_send.service = "domain";
+      to_send.content = "--create " + domain.value +
+                        (document.getElementById("checkbox").checked == true ? (" -owner " + liste_clients.value) : "") +
+                        " -ip 149.202.193.122 -status enabled -hosting true -dns false -login " +
+                        name.value + " -passwd \"" + pass.value + "\" -php true -php_safe_mode true -cgi true";
+      console.log(document.getElementById("checkbox"));
+      break;
+    case 'client':
+      console.log("client");
+      var LName = document.getElementById("LastName");
+      check += (verifElem(LName, "clientTitle") == false ? 1 : 0);
+      var FName = document.getElementById("FirstName");
+      check += (verifElem(FName, "name") == false ? 1 : 0);
+      var pays = document.getElementById("pays").value;
+      pass = document.getElementById("password");
+      check += (verifElem(pass, "pass") == false ? 1 : 0);
+      to_send.service = "client";
+      to_send.content = "--create " + FName.value + " -name \"" + LName.value +
+                        "\" -passwd \"" + pass.value + "\" -country " + pays + " -notify false";
+      break;
+    case 'wordpress':
+      console.log("wordpress");
+      name = document.getElementById("wpclient");
+      check += (verifElem(name, "name") == false ? 1 : 0);
+      var email = document.getElementById("wpemail");
+      check += (verifElem(email, "email") == false ? 1 : 0);
+      domain = document.getElementById("wp_liste_domains");
+      pass = document.getElementById("wppass");
+      check += (verifElem(pass, "pass") == false ? 1 : 0);
+      to_send.service = "wordpress";
+      to_send.content = name.value + " " + domain.value + " " + email.value + " " +
+                        document.getElementById("wptitle").value + " " + pass.value;
+      break;
+  }
+  console.log(to_send.content);
+  console.log(check);
+  if (check != 0)
+    return (false);
+  ws.send(JSON.stringify(to_send));
+  document.getElementById("message").value = "";
+}
+
+//vérification du contenu de la checkbox pour remplissage (ok != notOk)
+function checkCheckBox(elem)
+{
+  if (elem.checked == false ) {
+    var div = document.getElementById("clts");
+    div.removeChild(div.firstChild);
+    return false;
+  }
+  else {
+    var array = g_client_list.split("\n");
+    var selectList = document.createElement("select");
+    selectList.id = "liste_clients";
+    document.getElementById("clts").appendChild(selectList);
+    for (var i = 0; i < array.length - 1; i++) {
+      var option = document.createElement("option");
+      option.value = array[i];
+      option.text = array[i];
+      selectList.appendChild(option);
+    }
+  }
+  return true;
+}
+
+//Parti html avec les différents formulaires
+</script>
+</head>
+<html>
+ <body>
+   <p><font size="7"><b>Plesk script<br></b></font></p>
+   <p><font size="5"><b>Création d'un client</b></font></p>
+   <p>Veuillez renseigner les information demandées ci-dessous pour la crétion d'un client Plesk</p>
+   <form>
+     Nom du client: <input type="text" name="LastName" id="LastName" placeholder="exemple: Uxer Agence Digitale" required/><br>
+     Nom d'utilisateur Plesk: <input type="text" name="FirstName" id="FirstName" placeholder="Uxer" required/><br>
+     Mot de passe: <input type="password" id="password" name="password" onkeyup="verifElem(this)" required/>&nbsp&nbsp<i><font size="2">Le mot de passe doit contenir au moins 6 caractères avec au minumum une lettre majuscule et minucsule, une chiffre et un caractère spécial.</font></i><br>
+     Pays du client: <select name="Pays" id="pays" size="1" required>
+       <option value="Fr" selected>France </option>
+       <option value="En">Angleterre </option>
+       <option value="Us">Etats-Unis </option>
+       <option value="Es">Espagne </option>
+       <option value="All">Allemagne </option>
+     </select><br><br>
+     <input type="button" name="client" onclick="createElem(this)" value="Créer un client">
+     <!-- Rajouter des informations: voir la documentation de plesk-->
+   </form><br>
+   <p><font size="5"><b>Création d'un domaine</b></font></p>
+   <p>Veuillez renseigner les information demandées ci-dessous pour la crétion d'un nouveau domaine</p>
+   <form>
+     Nom de domaine: <input type="text" name="domain" id="Creationdomain" size="30" placeholder="www.example.com" required/><br>
+     Nom d'utilisateur Plesk: <input type="text" name="FirstName" id="FirstNameD" placeholder="Uxer" required/><br>
+     Mot de passe: <input type="password" name="password" id="passwordD" onkeyup="verifElem(this)" required/>&nbsp&nbsp<i><font size="2">Le mot de passe doit contenir au moins 6 caractères avec au minumum une lettre majuscule et minucsule, une chiffre et un caractère spécial.</font></i><br>
+     Affecter le domaine à un client existant ? <input type="checkbox" id="checkbox" value="0" onclick="checkCheckBox(this)" autocomplete="off">
+     <div id="clts"></div><br>
+     <input type="button" name="domain" onclick="createElem(this)" value="Créer le domaine"><br><br>
+   </form><br>
+   <p><font size="5"><b>Crétion d'un dépot git associé à un domaine</b></font></p>
+   <p>Veuillez renseigner les information demandées ci-dessous pour la crétion d'un nouveau dépot git Plesk</p>
+   <form>
+     Nom de domaine: <div id="domain_list"></div><br>
+     Nom du dépot: <input type="text" name="FirstName" id="GitRepoName" placeholder="Uxer" required><br>
+     Url de remote: <input type="text" name="domain" id="GitRemoteUrl" size="65" placeholder="https://sylvainstandre@bitbucket.org/uxeragency/mysegeo.git" required/><br>
+     Mot de passe application: <input type="password" name="AppPassword" id="AppPassword" size="30" required><br>
+     <input type="button" name="git" onclick="createElem(this)" value="Créer le dépot git"><br><br>
+   </form>
+   <p><font size="5"><b>Crétion d'un site wordpress</b></font></p>
+   <p>Veuillez renseigner les information demandées ci-dessous pour la crétion d'un nouveau site wordpress</p>
+   <form>
+     Adresse du site wordpress: <div id="wp_domain_list"></div><br>
+     Nom du client: <input type="text" name="wpclient" id="wpclient" size="30" placeholder="Uxer" required/><br>
+     Adresse e-mail du client: <input type="text" name="wpemail" id="wpemail" size="30" placeholder="sylvain@uxer.fr" required/><br>
+     Titre pour le site wordpress: <input type="text" name="wptitle" id="wptitle" size="50" placeholder="Uxer, l'agence web bordelaise" required/><br>
+     Mot de passe du site wordpress: <input type="password" name="wppass" id="wppass" onkeyup="verifElem(this)" required/>&nbsp&nbsp<i><font size="2">Le mot de passe doit contenir au moins 6 caractères avec au minumum une lettre majuscule et minucsule, une chiffre et un caractère spécial.</font></i><br><br>
+     <input type="button" name="wordpress" onclick="createElem(this)" value="Créer le site wordpress associé"><br><br>
+   </form>
+ <fieldset><legend>Retour serveur</legend>
+   <p id="message"></p>
+ </fieldset>
+ </body>
+</html>
